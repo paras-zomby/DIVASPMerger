@@ -9,5 +9,8 @@ wheels/
 # Virtual environments
 .venv
 
-reports/
+ext_tools/**
+!ext_tools/.gitkeep
 data/
+reports/
+sim_game_root/

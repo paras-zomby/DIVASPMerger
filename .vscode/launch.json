@@ -5,12 +5,11 @@
             "name": "Python Debugger: Current File with Arguments",
             "type": "debugpy",
             "request": "launch",
-            "program": "${file}",
+            "program": "${workspaceFolder}/cli.py",
             "console": "internalConsole", 
-            // 修改重点：将原来的字符串改为列表，每一项分开写
             "args": [
-                "--mods",
-                "..\\..\\mods\\"
+                "--game",
+                "sim_game_root/DivaMegaMix.exe"
             ],
             "justMyCode": true,
             "env": {

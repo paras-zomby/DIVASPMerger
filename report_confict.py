@@ -1,41 +1,27 @@
 from __future__ import annotations
 
 import argparse
-import re
 from collections import Counter, defaultdict
 from itertools import combinations
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, DefaultDict, Dict, Iterable, List, Sequence
+from typing import Any, DefaultDict, Dict, List, Sequence
 
 from openpyxl import Workbook, load_workbook
 
-PV_KEY_PATTERN = re.compile(r"^pv_(\d+)\.(.+)$", re.IGNORECASE)
-COMMENT_PATTERN = re.compile(r"^#\s*(\d+)\s*-\s*(.+)$")
-WHITESPACE_PATTERN = re.compile(r"\s+")
-
-
-def normalize_title(raw: str) -> str:
-    return WHITESPACE_PATTERN.sub(" ", raw).strip().lower()
-
-
-@dataclass
-class SongEntry:
-    pv_id: int
-    title: str
-    title_en: str | None
-    source_name: str
-    source_type: str
-    pvdb_path: Path | None = None
-
-    @property
-    def normalized_title(self) -> str:
-        reference = self.title_en or ""
-        return normalize_title(reference)
-
-    @property
-    def source_label(self) -> str:
-        return f"{self.source_type}:{self.source_name}"
+from divaspmerger import (
+    SongEntry,
+    apply_resolution_plans,
+    build_conflict_records,
+    load_mod_config,
+    plan_resolutions,
+)
+from divaspmerger.conflict_detector import (
+    detect_id_conflicts,
+    detect_song_conflicts,
+    discover_pvdb_files,
+    parse_pvdb_file,
+)
+from divaspmerger.tooling import ExternalTool, ToolConfig
 
 
 def parse_args() -> argparse.Namespace:
@@ -63,7 +49,66 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Where to write the generated Excel report.",
     )
+    parser.add_argument(
+        "--load-order",
+        type=Path,
+        default=None,
+        help="Optional JSON file describing mod load order and priorities.",
+    )
+    parser.add_argument(
+        "--backup-root",
+        type=Path,
+        default=Path("backups"),
+        help="Directory where backups of modified pv_db files will be stored.",
+    )
+    parser.add_argument(
+        "--unpack-tool",
+        type=Path,
+        default=None,
+        help="Executable used to unpack pv_db archives before editing.",
+    )
+    parser.add_argument(
+        "--unpack-args",
+        nargs="*",
+        default=(),
+        help="Additional arguments to pass to the unpack tool before the file paths.",
+    )
+    parser.add_argument(
+        "--repack-tool",
+        type=Path,
+        default=None,
+        help="Executable used to repack pv_db archives after editing.",
+    )
+    parser.add_argument(
+        "--repack-args",
+        nargs="*",
+        default=(),
+        help="Additional arguments to pass to the repack tool before the file paths.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Only print the actions that would be taken when resolving conflicts.",
+    )
     return parser.parse_args()
+
+
+def _build_tool_config(args: argparse.Namespace) -> ToolConfig | None:
+    if not args.unpack_tool and not args.repack_tool:
+        return None
+    if not args.unpack_tool or not args.repack_tool:
+        print("[warn] Both --unpack-tool and --repack-tool are required for automated resolution. Skipping tool steps.")
+        return None
+
+    unpack_tool = ExternalTool(
+        executable=args.unpack_tool.expanduser(),
+        args=tuple(str(arg) for arg in args.unpack_args),
+    )
+    repack_tool = ExternalTool(
+        executable=args.repack_tool.expanduser(),
+        args=tuple(str(arg) for arg in args.repack_args),
+    )
+    return ToolConfig(unpack_tool=unpack_tool, repack_tool=repack_tool, dry_run=args.dry_run)
 
 
 def load_base_catalog(catalog_path: Path) -> List[SongEntry]:
@@ -142,102 +187,6 @@ def _find_column(headers: Sequence[str], candidates: Sequence[str]) -> int | Non
             if candidate in header:
                 return idx
     return None
-
-
-def discover_pvdb_files(mods_root: Path) -> List[tuple[str, Path]]:
-    files: List[tuple[str, Path]] = []
-    for mod_dir in mods_root.iterdir():
-        if not mod_dir.is_dir():
-            continue
-        mod_name = mod_dir.name
-        for path in mod_dir.rglob("*.txt"):
-            if not path.is_file():
-                continue
-            if path.parent.name != "rom":
-                continue
-            lowered = path.name.lower()
-            if not lowered == "mod_pv_db.txt":
-                continue
-            files.append((mod_name, path))
-    return files
-
-
-def parse_pvdb_file(pvdb_path: Path, mod_name: str) -> List[SongEntry]:
-    song_data: Dict[int, Dict[str, str]] = defaultdict(dict)
-    with pvdb_path.open("r", encoding="utf-8", errors="ignore") as handle:
-        for raw_line in handle:
-            line = raw_line.strip()
-            if not line:
-                continue
-            match = COMMENT_PATTERN.match(line)
-            if match:
-                pv_id = int(match.group(1))
-                song_data[pv_id]["comment_title"] = match.group(2).strip()
-                continue
-            if line.startswith("#"):
-                continue
-            if "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            key = key.strip()
-            value = value.strip()
-            key_match = PV_KEY_PATTERN.match(key)
-            if not key_match:
-                continue
-            pv_id = int(key_match.group(1))
-            attr = key_match.group(2).lower()
-            if attr == "song_name":
-                song_data[pv_id]["song_name"] = value
-            elif attr == "song_name_en":
-                song_data[pv_id]["song_name_en"] = value
-
-    entries: List[SongEntry] = []
-    for pv_id, data in song_data.items():
-        primary = data.get("song_name") or data.get("comment_title")
-        secondary = data.get("song_name_en")
-        title = primary or secondary
-        if not title:
-            continue
-        entries.append(
-            SongEntry(
-                pv_id=pv_id,
-                title=title,
-                title_en=secondary,
-                source_name=mod_name,
-                source_type="mod",
-                pvdb_path=pvdb_path,
-            )
-        )
-    return entries
-
-
-def detect_id_conflicts(entries: Iterable[SongEntry]) -> Dict[int, List[SongEntry]]:
-    grouped: Dict[int, List[SongEntry]] = defaultdict(list)
-    for entry in entries:
-        grouped[entry.pv_id].append(entry)
-
-    conflicts: Dict[int, List[SongEntry]] = {}
-    for pv_id, group in grouped.items():
-        sources = {(item.source_type, item.source_name) for item in group}
-        if len(sources) > 1:
-            conflicts[pv_id] = group
-    return conflicts
-
-
-def detect_song_conflicts(entries: Iterable[SongEntry]) -> Dict[str, List[SongEntry]]:
-    grouped: Dict[str, List[SongEntry]] = defaultdict(list)
-    for entry in entries:
-        key = entry.normalized_title
-        if not key:
-            continue
-        grouped[key].append(entry)
-
-    conflicts: Dict[str, List[SongEntry]] = {}
-    for normalized_title, group in grouped.items():
-        sources = {(item.source_type, item.source_name) for item in group}
-        if len(sources) > 1:
-            conflicts[normalized_title] = group
-    return conflicts
 
 
 def _format_song_names(group: Sequence[SongEntry]) -> str:
@@ -382,8 +331,13 @@ def main() -> None:
     if not mods_root.exists():
         raise SystemExit(f"Mods path {mods_root} does not exist.")
 
+    load_order_path = args.load_order.expanduser().resolve() if args.load_order else None
+    priority_lookup = load_mod_config(load_order_path)
+
     # base_catalog = args.base_catalog.expanduser()
     output_path = args.output.expanduser()
+    backup_root = args.backup_root.expanduser()
+    tool_config = _build_tool_config(args)
 
     # base_entries = load_base_catalog(base_catalog)
     mod_entries: List[SongEntry] = []
@@ -393,7 +347,7 @@ def main() -> None:
     else:
         print(f"[info] Found {len(pvdb_files)} pv_db files in mods directory.")
     for mod_name, pvdb_path in pvdb_files:
-        parsed = parse_pvdb_file(pvdb_path, mod_name)
+        parsed = parse_pvdb_file(pvdb_path, mod_name, priority_lookup)
         if not parsed:
             continue
         mod_entries.extend(parsed)
@@ -433,6 +387,14 @@ def main() -> None:
 
     export_report(output_path, all_entries, id_conflicts, song_conflicts)
     print(f"[info] Report saved to {output_path}")
+
+    conflict_records = build_conflict_records(id_conflicts, song_conflicts, priority_lookup)
+    plans = plan_resolutions(conflict_records)
+    if plans:
+        print(f"[info] Prepared {len(plans)} resolution plan(s). Starting execution...")
+        apply_resolution_plans(plans, backup_root=backup_root, tool_config=tool_config)
+    else:
+        print("[info] No actionable conflicts detected. Nothing to resolve.")
 
 
 if __name__ == "__main__":
