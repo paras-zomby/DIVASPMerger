@@ -2,20 +2,20 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, List
 
-from .models import ConflictRecord, ConflictType, ModInfo, ResolutionPlan, SongEntry
+from .models import ConflictRecord, ConflictType, PackInfo, ResolutionPlan, SongEntry
 
 DEFAULT_LOW_PRIORITY = 9999
 
 
-def _entry_priority(entry: SongEntry, priority_lookup: Dict[str, ModInfo]) -> int:
-    mod_info = priority_lookup.get(entry.source_name)
-    if mod_info:
-        return mod_info.priority
+def _entry_priority(entry: SongEntry, pack_infos: Dict[str, PackInfo]) -> int:
+    pack = pack_infos.get(entry.source_name)
+    if pack:
+        return pack.priority
     return DEFAULT_LOW_PRIORITY
 
 
-def _select_winner(entries: Iterable[SongEntry], priority_lookup: Dict[str, ModInfo]) -> tuple[SongEntry, List[SongEntry]]:
-    sorted_entries = sorted(entries, key=lambda e: (_entry_priority(e, priority_lookup), e.source_name))
+def _select_winner(entries: Iterable[SongEntry], pack_infos: Dict[str, PackInfo]) -> tuple[SongEntry, List[SongEntry]]:
+    sorted_entries = sorted(entries, key=lambda e: (_entry_priority(e, pack_infos), e.source_name))
     winner = sorted_entries[0]
     losers = sorted_entries[1:]
     return winner, losers
@@ -24,11 +24,11 @@ def _select_winner(entries: Iterable[SongEntry], priority_lookup: Dict[str, ModI
 def build_conflict_records(
     id_conflicts: Dict[int, List[SongEntry]],
     song_conflicts: Dict[str, List[SongEntry]],
-    priority_lookup: Dict[str, ModInfo],
+    pack_infos: Dict[str, PackInfo],
 ) -> List[ConflictRecord]:
     records: List[ConflictRecord] = []
     for pv_id, group in id_conflicts.items():
-        winner, losers = _select_winner(group, priority_lookup)
+        winner, losers = _select_winner(group, pack_infos)
         records.append(
             ConflictRecord(
                 conflict_type=ConflictType.ID,
@@ -40,7 +40,7 @@ def build_conflict_records(
         )
 
     for normalized_title, group in song_conflicts.items():
-        winner, losers = _select_winner(group, priority_lookup)
+        winner, losers = _select_winner(group, pack_infos)
         records.append(
             ConflictRecord(
                 conflict_type=ConflictType.SONG,

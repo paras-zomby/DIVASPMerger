@@ -21,6 +21,7 @@ from divaspmerger.conflict_detector import (
     discover_pvdb_files,
     parse_pvdb_file,
 )
+from divaspmerger.models import PackInfo
 from divaspmerger.tooling import ExternalTool, ToolConfig
 
 
@@ -332,7 +333,11 @@ def main() -> None:
         raise SystemExit(f"Mods path {mods_root} does not exist.")
 
     load_order_path = args.load_order.expanduser().resolve() if args.load_order else None
-    priority_lookup = load_mod_config(load_order_path)
+    config_result = load_mod_config(load_order_path)
+    if isinstance(config_result, tuple):
+        priority_lookup = config_result[0]
+    else:
+        priority_lookup = config_result
 
     # base_catalog = args.base_catalog.expanduser()
     output_path = args.output.expanduser()
@@ -340,20 +345,19 @@ def main() -> None:
     tool_config = _build_tool_config(args)
 
     # base_entries = load_base_catalog(base_catalog)
-    mod_entries: List[SongEntry] = []
+    pack_infos: List[PackInfo] = []
     pvdb_files = discover_pvdb_files(mods_root)
     if not pvdb_files:
         print("[warn] No pv_db files found under the provided mods directory.")
     else:
         print(f"[info] Found {len(pvdb_files)} pv_db files in mods directory.")
     for mod_name, pvdb_path in pvdb_files:
-        parsed = parse_pvdb_file(pvdb_path, mod_name, priority_lookup)
-        if not parsed:
+        pack_info = parse_pvdb_file(pvdb_path, mod_name, priority_lookup)
+        if not pack_info.songs:
             continue
-        mod_entries.extend(parsed)
+        pack_infos.append(pack_info)
 
-    # all_entries = [*base_entries, *mod_entries]
-    all_entries = mod_entries
+    mod_entries: List[SongEntry] = [song for pack in pack_infos for song in pack.songs]
     if not mod_entries:
         print("[warn] No mod songs detected. Report will include base catalog only.")
 
@@ -363,10 +367,10 @@ def main() -> None:
         for mod_name, count in mod_counter.most_common():
             print(f"  - {mod_name}: {count} songs")
 
-    print(f"[info] Total songs indexed: {len(all_entries)}")
+    print(f"[info] Total songs indexed: {len(mod_entries)}")
 
-    id_conflicts = detect_id_conflicts(all_entries)
-    song_conflicts = detect_song_conflicts(all_entries)
+    id_conflicts = detect_id_conflicts(mod_entries)
+    song_conflicts = detect_song_conflicts(mod_entries)
 
     if id_conflicts:
         print("[conflict] PV ID clashes detected:")
@@ -385,10 +389,11 @@ def main() -> None:
     else:
         print("[ok] No song title conflicts found.")
 
-    export_report(output_path, all_entries, id_conflicts, song_conflicts)
+    export_report(output_path, mod_entries, id_conflicts, song_conflicts, priority_lookup)
     print(f"[info] Report saved to {output_path}")
 
-    conflict_records = build_conflict_records(id_conflicts, song_conflicts, priority_lookup)
+    pack_lookup = {pack.name: pack for pack in pack_infos}
+    conflict_records = build_conflict_records(id_conflicts, song_conflicts, pack_lookup)
     plans = plan_resolutions(conflict_records)
     if plans:
         print(f"[info] Prepared {len(plans)} resolution plan(s). Starting execution...")

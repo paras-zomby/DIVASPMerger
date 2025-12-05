@@ -5,10 +5,11 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Dict, Iterable, List
 
-from .models import SongEntry
+from .models import PackInfo, SongEntry
 
 PV_KEY_PATTERN = re.compile(r"^pv_(\d+)\.(.+)$", re.IGNORECASE)
 COMMENT_PATTERN = re.compile(r"^#\s*(\d+)\s*-\s*(.+)$")
+DEFAULT_PRIORITY = 9999
 
 
 def discover_pvdb_files(mods_root: Path) -> List[tuple[str, Path]]:
@@ -34,7 +35,7 @@ def parse_pvdb_file(
 	pvdb_path: Path,
 	mod_name: str,
 ) -> List[SongEntry]:
-	"""Parse a mod's pv_db text file into song entries."""
+	"""Parse a mod's pv_db text file into song entries and pack metadata."""
 
 	song_data: Dict[int, Dict[str, str]] = defaultdict(dict)
 	with pvdb_path.open("r", encoding="utf-8", errors="ignore") as handle:
@@ -64,15 +65,14 @@ def parse_pvdb_file(
 			elif attr == "song_name_en":
 				song_data[pv_id]["song_name_en"] = value
 
-	entries: List[SongEntry] = []
-
+	song_entries = []
 	for pv_id, data in song_data.items():
 		primary = data.get("song_name") or data.get("comment_title")
 		secondary = data.get("song_name_en")
 		title = primary or secondary
 		if not title:
 			continue
-		entries.append(
+		song_entries.append(
 			SongEntry(
 				pv_id=pv_id,
 				title=title,
@@ -82,7 +82,37 @@ def parse_pvdb_file(
 				pvdb_path=pvdb_path,
 			)
 		)
-	return entries
+	return song_entries
+
+
+def collect_pack_and_songs(
+    mod_root: Path,
+    pvdb_files: List[tuple[str, Path]],
+    priority_lookup: Dict[str, int] | None = None,
+) -> tuple[Dict[str, PackInfo], List[SongEntry]]:
+	"""Construct PackInfo objects for each mod based on their pv_db files."""
+    
+	packs: Dict[str, PackInfo] = defaultdict()
+	all_songs: List[SongEntry] = []
+	for mod_name, pvdb_path in pvdb_files:
+		parsed_songs = parse_pvdb_file(pvdb_path, mod_name)
+		priority = priority_lookup.get(mod_name, DEFAULT_PRIORITY) if priority_lookup else DEFAULT_PRIORITY
+		pack = PackInfo(
+			name=mod_name,
+			priority=priority,
+			location=mod_root / mod_name,
+			pvdb_path=pvdb_path,
+			songs=parsed_songs,
+		)
+		all_songs.extend(parsed_songs)
+		if mod_name in packs:
+			raise SystemExit(f"Duplicate mod name detected: {mod_name}. Please check two 'pvdb' files." \
+                            f"One: {packs[mod_name].pvdb_path}, Other: {pack.pvdb_path}." \
+                            f"It may because of pvdb file discover rule not Complete and find a wrong pvdb file." \
+                            f"Please remove one of them as a temporary workaround.")
+		else:
+			packs[mod_name] = pack
+	return packs, all_songs
 
 
 def detect_id_conflicts(entries: Iterable[SongEntry]) -> Dict[int, List[SongEntry]]:
@@ -123,4 +153,5 @@ __all__ = [
 	"parse_pvdb_file",
 	"detect_id_conflicts",
 	"detect_song_conflicts",
+	"collect_pack_and_songs",
 ]

@@ -4,10 +4,8 @@ import toml
 from pathlib import Path
 from typing import Dict
 
-from .models import ModInfo
 
-
-def load_mod_config(mod_config_path: Path) -> tuple[Dict[str, ModInfo], Path]:
+def load_mod_config(mod_config_path: Path) -> tuple[Dict[str, int], Path]:
     """Load mod priority information from a JSON file.
 
     The exact schema of the JSON file is currently undefined. This function attempts
@@ -15,7 +13,7 @@ def load_mod_config(mod_config_path: Path) -> tuple[Dict[str, ModInfo], Path]:
     adjust the parsing logic once the final format is confirmed.
     """
 
-    priorities: Dict[str, ModInfo] = {}
+    priorities: Dict[str, int] = {}
     
     if not mod_config_path.exists():
         print(f"[warn] Load-order file {mod_config_path} not found. Proceeding without priorities.")
@@ -32,10 +30,6 @@ def load_mod_config(mod_config_path: Path) -> tuple[Dict[str, ModInfo], Path]:
     mod_priorities_list = config['priority']
     
     for pri, name in enumerate(mod_priorities_list):
-        priorities[name] = ModInfo(
-            name=name,
-            priority=pri,
-            location=mods_root_dir / name,
-        )
+        priorities[name] = pri
 
     return priorities, mods_root_dir

@@ -13,13 +13,6 @@ class ConflictType(str, Enum):
 
 
 @dataclass(slots=True)
-class ModInfo:
-    name: str
-    priority: int
-    location: Path | None = None
-
-
-@dataclass(slots=True)
 class SongEntry:
     pv_id: int
     title: str
@@ -37,6 +30,33 @@ class SongEntry:
     def source_label(self) -> str:
         return f"{self.source_type}:{self.source_name}"
 
+
+@dataclass(slots=True)
+class PackInfo:
+    name: str
+    priority: int
+    location: Path
+    pvdb_path: Path
+    songs: List[SongEntry] = field(default_factory=list)
+
+    def add_song(self, song: SongEntry) -> None:
+        self.songs.append(song)
+        
+    def merge(self, other: "PackInfo") -> None:
+        assert self.name == other.name, "Can only merge packs with the same name"
+        assert self.pvdb_path == other.pvdb_path, "Can only merge packs with the same pvdb_path"
+        for song in other.songs:
+            if song not in self.songs:
+                self.songs.append(song)
+    
+    @property
+    def song_ids(self) -> List[int]:
+        return [song.pv_id for song in self.songs]
+    
+    @property
+    def num_songs(self) -> int:
+        return len(self.songs)
+    
 
 @dataclass(slots=True)
 class ConflictRecord:
@@ -61,6 +81,10 @@ class ResolutionPlan:
     mod_name: str
     pvdb_file: Path
     pv_ids_to_remove: List[int] = field(default_factory=list)
+    
+    @property
+    def total_removals(self) -> int:
+        return len(self.pv_ids_to_remove)
 
     def merge(self, other: "ResolutionPlan") -> None:
         assert self.mod_name == other.mod_name, "Can only merge plans for the same mod"

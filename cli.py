@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter
+from collections import defaultdict
 from pathlib import Path
-from typing import List
+from typing import Dict
 
 from divaspmerger import (
     apply_resolution_plans,
@@ -15,9 +15,9 @@ from divaspmerger import (
     detect_id_conflicts,
     detect_song_conflicts,
     discover_pvdb_files,
-    parse_pvdb_file,
+    collect_pack_and_songs,
 )
-from divaspmerger.models import SongEntry
+from divaspmerger.models import PackInfo
 from divaspmerger.tooling import ExternalTool, ToolConfig
 
 def parse_args() -> argparse.Namespace:
@@ -80,56 +80,55 @@ def main() -> None:
     mod_config_path = game_root.parent / "config.toml"
     priority_lookup, mods_root = load_mod_config(mod_config_path)
     
-    tool_config = _build_tool_config(args)
-
-    mod_entries: List[SongEntry] = []
+    pack_infos: Dict[str, PackInfo] = defaultdict()
     pvdb_files = discover_pvdb_files(mods_root)
     
     if not pvdb_files:
         print("[warn] No pv_db files found under the provided mods directory.")
     else:
         print(f"[info] Found {len(pvdb_files)} pv_db files in mods directory.")
-    for mod_name, pvdb_path in pvdb_files:
-        parsed = parse_pvdb_file(pvdb_path, mod_name)
-        if not parsed:
-            continue
-        mod_entries.extend(parsed)
-
-    all_entries = mod_entries
+    
+    pack_infos, mod_entries = collect_pack_and_songs(
+        mod_root=mods_root,
+        pvdb_files=pvdb_files,
+        priority_lookup=priority_lookup,
+    )
+    
     if not mod_entries:
-        print("[warn] No mod songs detected. Report will include base catalog only.")
+        print("[warn] No mod songs detected. Program exit.")
         return
 
-    mod_counter = Counter(entry.source_name for entry in mod_entries)
-    if mod_counter:
-        print("[info] Songs per mod:")
-        for mod_name, count in mod_counter.most_common():
-            print(f"  - {mod_name}: {count} songs")
-    print(f"[info] Total songs indexed: {len(all_entries)}")
+    print("[info] Songs per mod:")
+    for mod_name, pack_info in pack_infos.items():
+        print(f"  - {mod_name}: {pack_info.num_songs} songs")
+    print(f"[info] Total songs indexed: {len(mod_entries)}")
 
-    id_conflicts = detect_id_conflicts(all_entries)
-    song_conflicts = detect_song_conflicts(all_entries)
+    id_conflicts = detect_id_conflicts(mod_entries)
+    song_conflicts = detect_song_conflicts(mod_entries)
     
     if args.verbose_conflict:
         print_conflict_details(id_conflicts, song_conflicts)
-        
-    export_path = args.export_path
-    if not export_path == Path(""):
-        if export_path.suffix.lower() != ".xlsx":
-            export_path = export_path / "conflict_export.xlsx"
-        export_report(output_path=export_path, entries=all_entries,
-                      id_conflicts=id_conflicts, song_conflicts=song_conflicts)
-        print(f"[info] Report saved to {export_path}")
 
     conflict_records = build_conflict_records(id_conflicts=id_conflicts,
                                               song_conflicts=song_conflicts,
-                                              priority_lookup=priority_lookup)
+                                              pack_infos=pack_infos)
     plans = plan_resolutions(conflict_records)
-    if plans:
-        print(f"[info] Prepared {len(plans)} resolution plan(s). Starting execution...")
-        apply_resolution_plans(plans, tool_config=tool_config)
-    else:
-        print("[info] No actionable conflicts detected. Nothing to resolve.")
+    
+    export_path = args.export_path
+    if not export_path == Path(""):
+        if export_path.suffix.lower() != ".xlsx":
+            export_path = export_path / "conflict_report.xlsx"
+        export_report(output_path=export_path, entries=mod_entries,
+                      pack_infos=pack_infos, conflicts=conflict_records,
+                      plans=plans)
+        print(f"[info] Report saved to {export_path}")
+        
+    # tool_config = _build_tool_config(args)
+    # if plans:
+    #     print(f"[info] Prepared {len(plans)} resolution plan(s). Starting execution...")
+    #     apply_resolution_plans(plans, tool_config=tool_config)
+    # else:
+    #     print("[info] No actionable conflicts detected. Nothing to resolve.")
 
 
 if __name__ == "__main__":
