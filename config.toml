@@ -1,0 +1,2 @@
+ignore_mods = ["!Another Song Merge Tool"]
+exempt_mods = ["Reboot Songs Core", "Reboot Songs for Restore Cut Songs", "Reboot Songs for X Song Pack", "EdenProject_Module"]

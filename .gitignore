@@ -10,7 +10,8 @@ wheels/
 .venv
 
 ext_tools/**
+pvdb_backup/**
 !ext_tools/.gitkeep
+!pvdb_backup/.gitkeep
 data/
 reports/
-sim_game_root/

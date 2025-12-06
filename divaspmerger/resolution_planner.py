@@ -56,6 +56,8 @@ def build_conflict_records(
 def plan_resolutions(conflicts: Iterable[ConflictRecord]) -> Dict[str, ResolutionPlan]:
     plans: Dict[str, ResolutionPlan] = {}
     for conflict in conflicts:
+        if conflict.conflict_type == ConflictType.SONG:
+            continue  # SONG conflicts no need to resolve now
         for loser in conflict.losers:
             plan = plans.setdefault(
                 loser.source_name,

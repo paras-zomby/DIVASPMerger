@@ -9,7 +9,7 @@
             "console": "internalConsole", 
             "args": [
                 "--game",
-                "sim_game_root/DivaMegaMix.exe"
+                "../sim_game_root/DivaMegaMix.exe"
             ],
             "justMyCode": true,
             "env": {

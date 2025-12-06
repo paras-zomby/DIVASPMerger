@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, Iterable, List
 
+from .logging_utils import log_info
 from .models import PackInfo, SongEntry
+from .text_utils import COMMENT_PATTERN, PV_KEY_PATTERN
 
-PV_KEY_PATTERN = re.compile(r"^pv_(\d+)\.(.+)$", re.IGNORECASE)
-COMMENT_PATTERN = re.compile(r"^#\s*(\d+)\s*-\s*(.+)$")
 DEFAULT_PRIORITY = 9999
 
 
@@ -86,17 +85,34 @@ def parse_pvdb_file(
 
 
 def collect_pack_and_songs(
-    mod_root: Path,
-    pvdb_files: List[tuple[str, Path]],
-    priority_lookup: Dict[str, int] | None = None,
+	mod_root: Path,
+	pvdb_files: List[tuple[str, Path]],
+	priority_lookup: Dict[str, int] | None = None,
+	ignore_mods: List[str] | None = None,
 ) -> tuple[Dict[str, PackInfo], List[SongEntry]]:
 	"""Construct PackInfo objects for each mod based on their pv_db files."""
-    
+
 	packs: Dict[str, PackInfo] = defaultdict()
 	all_songs: List[SongEntry] = []
 	for mod_name, pvdb_path in pvdb_files:
+		if ignore_mods and mod_name in ignore_mods:
+			log_info(f"Skipping ignored mod: {mod_name}")
+			continue
+
+		if mod_name in packs:
+			raise SystemExit(
+				f"Duplicate mod name detected: {mod_name}. Please check two 'pvdb' files."
+				f"One: {packs[mod_name].pvdb_path}, Other: {pvdb_path}."
+				f"It may because of pvdb file discover rule not Complete and find a wrong pvdb file."
+				f"Please remove one of them as a temporary workaround."
+			)
+
 		parsed_songs = parse_pvdb_file(pvdb_path, mod_name)
-		priority = priority_lookup.get(mod_name, DEFAULT_PRIORITY) if priority_lookup else DEFAULT_PRIORITY
+		priority = (
+			priority_lookup.get(mod_name, DEFAULT_PRIORITY)
+			if priority_lookup
+			else DEFAULT_PRIORITY
+		)
 		pack = PackInfo(
 			name=mod_name,
 			priority=priority,
@@ -104,14 +120,9 @@ def collect_pack_and_songs(
 			pvdb_path=pvdb_path,
 			songs=parsed_songs,
 		)
+		packs[mod_name] = pack
 		all_songs.extend(parsed_songs)
-		if mod_name in packs:
-			raise SystemExit(f"Duplicate mod name detected: {mod_name}. Please check two 'pvdb' files." \
-                            f"One: {packs[mod_name].pvdb_path}, Other: {pack.pvdb_path}." \
-                            f"It may because of pvdb file discover rule not Complete and find a wrong pvdb file." \
-                            f"Please remove one of them as a temporary workaround.")
-		else:
-			packs[mod_name] = pack
+
 	return packs, all_songs
 
 

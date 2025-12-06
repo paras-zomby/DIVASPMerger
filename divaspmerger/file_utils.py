@@ -1,43 +1,42 @@
 from __future__ import annotations
 
 import shutil
-import subprocess
-import tempfile
-from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator, Sequence
 
+from .logging_utils import log_info
 
 def ensure_directory(path: Path) -> None:
-	path.mkdir(parents=True, exist_ok=True)
+    path.mkdir(parents=True, exist_ok=True)
 
 
-def backup_file(source: Path) -> Path:
-	if not source.exists():
-		raise FileNotFoundError(f"Cannot backup missing file: {source}")
-	destination = source.parent / (source.name + ".bak")
-	shutil.copy2(source, destination)
-	return destination
+def backup_file(source: Path, backup_dir: Path) -> Path:
+    if not source.exists():
+        raise FileNotFoundError(f"Cannot backup missing file: {source}")
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    mod_name = source.parent.parent.name
+    destination = backup_dir / (mod_name + "_" + source.name + ".bak")
+    if not destination.exists():
+        shutil.copy2(source, destination)
+        log_info(f"Created backup: {destination}")
+    else:
+        log_info(f"Backup already exists: {destination}")
+    return destination
+
+
+def restore_backup(
+    backup_dir: Path, target_path: Path, no_exist_ok: bool = False
+) -> None:
+    mod_name = target_path.parent.parent.name
+    backup_path = backup_dir / (mod_name + "_" + target_path.name + ".bak")
+    if not backup_path.exists():
+        if no_exist_ok:
+            return
+        raise FileNotFoundError(f"Cannot restore missing backup: {backup_path}")
+    shutil.copy2(backup_path, target_path)
+    log_info(f"Restored backup from {backup_path} to {target_path}")
 
 
 def copy_tree(source: Path, destination: Path) -> None:
-	if destination.exists():
-		shutil.rmtree(destination)
-	shutil.copytree(source, destination)
-
-
-def run_command(command: Sequence[str], *, cwd: Path | None = None, dry_run: bool = False) -> subprocess.CompletedProcess[str]:
-	if dry_run:
-		print(f"[dry-run] Would execute: {' '.join(command)} (cwd={cwd})")
-		return subprocess.CompletedProcess(command, 0, "", "")
-	result = subprocess.run(command, cwd=cwd, check=True, capture_output=True, text=True)
-	return result
-
-
-@contextmanager
-def temporary_directory(prefix: str = "divaspmerger_") -> Iterator[Path]:
-	temp_dir = Path(tempfile.mkdtemp(prefix=prefix))
-	try:
-		yield temp_dir
-	finally:
-		shutil.rmtree(temp_dir, ignore_errors=True)
+    if destination.exists():
+        shutil.rmtree(destination)
+    shutil.copytree(source, destination)

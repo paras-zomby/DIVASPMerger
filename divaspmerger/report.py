@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Sequence
 
 from openpyxl import Workbook
 
+from .logging_utils import log_conflict, log_ok
 from .models import ConflictRecord, ConflictType, PackInfo, ResolutionPlan, SongEntry
 
 
@@ -13,24 +14,24 @@ def print_conflict_details(
     id_conflicts: Dict[int, List[SongEntry]], song_conflicts: Dict[str, List[SongEntry]]
 ) -> None:
     if id_conflicts:
-        print("[conflict] PV ID clashes detected:")
+        log_conflict("PV ID clashes detected:")
         for pv_id, group in sorted(id_conflicts.items()):
             details = "; ".join(
                 f"{entry.title} ({entry.source_label})" for entry in group
             )
-            print(f"  - {pv_id}: {details}")
+            log_conflict(f"{pv_id}: {details}", indent=2)
     else:
-        print("[ok] No PV ID conflicts found.")
+        log_ok("No PV ID conflicts found.")
     if song_conflicts:
-        print("[conflict] Song title clashes detected:")
+        log_conflict("Song title clashes detected:")
         for normalized_title, group in sorted(song_conflicts.items()):
             human_title = group[0].title
             details = "; ".join(
                 f"id {entry.pv_id} ({entry.source_label})" for entry in group
             )
-            print(f"  - {human_title}: {details}")
+            log_conflict(f"{human_title}: {details}", indent=2)
     else:
-        print("[ok] No song title conflicts found.")
+        log_ok("No song title conflicts found.")
 
 
 def _format_song_names(group: Sequence[SongEntry]) -> str:
@@ -76,11 +77,14 @@ def _build_pack_conflict_rows(
 ) -> List[List[Any]]:
     
     conflict_partners: Dict[str, set[str]] = {}
+    conflict_ids: Dict[str, set[int]] = {}
     for conflict in conflicts:
         involved_mods = conflict.involved_mods()
         for mod_a, mod_b in combinations(involved_mods, 2):
             conflict_partners.setdefault(mod_a, set()).add(mod_b)
             conflict_partners.setdefault(mod_b, set()).add(mod_a)
+        for mod in involved_mods:
+            conflict_ids.setdefault(mod, set()).add(conflict.winner.pv_id)
     
     rows: List[List[Any]] = []
     for pack_name, pack_info in pack_infos.items():
@@ -91,7 +95,7 @@ def _build_pack_conflict_rows(
             pack_info.priority,  # priority
             pack_name,  # pack_name
             pack_info.num_songs,  # total_songs
-            len(conflict_partner),  # conflict_songs
+            len(conflict_ids.get(pack_name, [])),  # conflict_songs
             removal_songs,  # removal_songs
             pack_info.num_songs - removal_songs,  # remain_songs
             ", ".join(conflict_partner),  # conflict_partners
